@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Attendance & Concentration Tracking</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { --green:#4CAF50; --red:#FF5722; --blue:#1877f2; }
+    body { font-family:'Roboto',sans-serif; background:#f0f2f5; color:#333; margin:0; padding:24px; }
+    header{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px;}
+    h1{ margin:0; font-weight:500; color:var(--blue);}
+    .btn{ padding:8px 12px; border-radius:8px; background:#fff; border:1px solid #ddd; cursor:pointer; text-decoration:none; color:inherit;}
+    .btn:hover{ background:#f7f7f7;}
+    #stage{ display:grid; grid-template-columns:1fr auto; gap:16px; align-items:start; }
+    #videoWrapper{ position:relative; width:100%; max-width:760px; aspect-ratio:4/3; border-radius:12px; overflow:hidden; box-shadow:0 4px 15px rgba(0,0,0,0.1); background:#000; }
+    video,#overlay{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+    #status{ margin:10px 0 0; font-weight:500; }
+    .panel{ width:280px; background:#fff; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,0.08); padding:14px 16px; position:sticky; top:10px;}
+    .panel h3{ margin:0 0 8px; font-weight:500;}
+    .stat{ display:flex; justify-content:space-between; margin:6px 0;}
+    .stat b{ font-weight:500;}
+    #results{ margin-top:18px; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px;}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎥 Attendance & Concentration Tracking</h1>
+    <a class="btn" id="dlBtn" href="#">Download Attendance Excel</a>
+  </header>
+
+  <div id="stage">
+    <div>
+      <div id="videoWrapper">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+      </div>
+      <div id="status">Initializing camera…</div>
+      <div id="results"></div>
+    </div>
+
+    <aside class="panel">
+      <h3>📊 Live Session</h3>
+      <div class="stat"><span>Focused Seconds ⏱️</span><b id="focusedTotal">0</b></div>
+      <div class="stat"><span>Distracted Seconds ❌</span><b id="distractedTotal">0</b></div>
+      <hr>
+      <h3>😵 Distracted Students</h3>
+      <ul id="distractedList" style="margin:6px 0 0 18px; padding:0;"></ul>
+    </aside>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const ctx = overlay.getContext('2d');
+    const statusDiv = document.getElementById('status');
+    const focusedTotalEl = document.getElementById('focusedTotal');
+    const distractedTotalEl = document.getElementById('distractedTotal');
+    const distractedListEl = document.getElementById('distractedList');
+    const dlBtn = document.getElementById('dlBtn');
+
+    dlBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.location.href = '/download_attendance?t=' + Date.now();
+    });
+
+    let lastTick = 0;
+    const POLL_MS = 2000;
+
+    async function setupCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          overlay.width = video.videoWidth;
+          overlay.height = video.videoHeight;
+          statusDiv.textContent = '✅ Camera active. Detecting faces…';
+          requestAnimationFrame(loop);
+        };
+      } catch (e) {
+        console.error(e);
+        statusDiv.textContent = '❌ Webcam blocked. Allow camera access.';
+      }
+    }
+
+    function drawFaces(faces) {
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      const resultsDiv = document.getElementById('results');
+      resultsDiv.innerHTML = '';
+
+      if (!faces || faces.length === 0) {
+        statusDiv.textContent = '⚠️ No faces detected.';
+        return;
+      }
+      statusDiv.textContent = `✅ Detected ${faces.length} face(s).`;
+
+      faces.forEach(face => {
+        const { BoundingBox, Concentration, UserID, Name, Gender, AgeRange, FocusTimeSec, DistractedTimeSec } = face;
+        const x = BoundingBox.Left * overlay.width;
+        const y = BoundingBox.Top * overlay.height;
+        const w = BoundingBox.Width * overlay.width;
+        const h = BoundingBox.Height * overlay.height;
+
+        const isFocused = (Concentration === 'Focused');
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = isFocused ? '#4CAF50' : '#FF5722';
+        ctx.strokeRect(x, y, w, h);
+
+        const label = `${Name} • ${Concentration}`;
+        ctx.font = "14px 'Roboto', sans-serif";
+        const tw = ctx.measureText(label).width + 12;
+        const lh = 22;
+        const ly = (y > 24) ? (y - lh - 2) : (y + h + 2);
+        ctx.fillStyle = isFocused ? '#4CAF50' : '#FF5722';
+        ctx.fillRect(x, ly, tw, lh);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, x + 6, ly + 15);
+
+        // ✅ Tailwind Student Card
+        const card = document.createElement('div');
+        card.className = `student-card bg-white p-4 rounded-lg shadow-md mt-4 border-l-4 ${isFocused ? 'border-green-500' : 'border-red-500'}`;
+        card.innerHTML = `
+          <h3 class="text-lg font-semibold ${isFocused ? 'text-green-700' : 'text-red-700'}">
+            ${Name || "Unknown"} (${Concentration})
+          </h3>
+          <p><strong>User ID:</strong> ${UserID}</p>
+          <p><strong>Gender:</strong> ${Gender}</p>
+          <p><strong>Age Range:</strong> ${AgeRange.Low} - ${AgeRange.High}</p>
+          <p><strong>Focused:</strong> ${FocusTimeSec}s</p>
+          <p><strong>Distracted:</strong> ${DistractedTimeSec}s</p>
+        `;
+        resultsDiv.appendChild(card);
+      });
+    }
+
+    function updateRightPanel(stats) {
+      if (!stats) return;
+      focusedTotalEl.textContent = stats.focused_total ?? 0;
+      distractedTotalEl.textContent = stats.distracted_total ?? 0;
+      distractedListEl.innerHTML = '';
+      (stats.distracted_students || []).forEach(name => {
+        const li = document.createElement('li');
+        li.textContent = name;
+        distractedListEl.appendChild(li);
+      });
+    }
+
+    async function tick() {
+      if (video.readyState < 2) return;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const cctx = canvas.getContext('2d');
+      cctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      await new Promise(resolve => {
+        canvas.toBlob(async blob => {
+          const fd = new FormData();
+          fd.append('file', blob, 'frame.jpg');
+          try {
+            const res = await fetch('/detect', { method: 'POST', body: fd });
+            const data = await res.json();
+            drawFaces(data.faces || []);
+            updateRightPanel(data.stats);
+          } catch (e) {
+            console.error('Detect error:', e);
+            statusDiv.textContent = '❌ Server error during detection.';
+          }
+          resolve();
+        }, 'image/jpeg');
+      });
+    }
+
+    async function loop(ts) {
+      if (!lastTick || (ts - lastTick) > POLL_MS) {
+        lastTick = ts;
+        await tick();
+      }
+      requestAnimationFrame(loop);
+    }
+
+    setupCamera();
+  </script>
+</body>
+</html>
